@@ -5,6 +5,7 @@ Executar: streamlit run app.py
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle, Polygon, Patch
 from matplotlib.lines import Line2D
+from matplotlib.transforms import offset_copy
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -119,14 +120,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 DEFAULT_COMB = pd.DataFrame([
-    # [1, 1200., 50, 40, 0., 0.],
-    # [2, 1200., 50, 40, 50., 0.],
-    # [3, 1200., 50, 40, -50., 0.],
-    # [4, 1200., 50, 40, 0., 70.],
-    # [5, 1200., 50, 40, 0., -70.],
-    # [6, 900., 50, 40, 120., 80.],
-    # [7, 900., 50, 40, -120., 80.],
-    # [8, 900., 50, 40, 100., -100.],
+    #[1, 1200., 50, 40, 0., 0.],
+    #[2, 1200., 50, 40, 50., 0.],
+    #[3, 1200., 50, 40, -50., 0.],
+    #[4, 1200., 50, 40, 0., 70.],
+    #[5, 1200., 50, 40, 0., -70.],
+    #[6, 900., 50, 40, 120., 80.],
+    #[7, 900., 50, 40, -120., 80.],
+    #[8, 900., 50, 40, 100., -100.],
 ], columns=["Comb.", "N", "Fx", "Fy", "Mx", "My"])
 
 
@@ -244,6 +245,73 @@ def _cota_v(ax, x, y1, y2, texto, ref1=None, ref2=None, side=1, ext=0.0, fs=7.5)
             bbox={"fc": "white", "ec": "none", "pad": .8}, zorder=6)
 
 
+COR_FORCA = "#1565c0"
+COR_MOMENTO = "#c2410c"
+COR_EIXO = "#555555"
+
+
+def _seta(fig, ax, origem, eixo, comp, cor, pontas=1, ms=7.0, lw=1.8, rotulo=None,
+          lado=1, fs=9.5):
+    """Seta paralela a x ou y, no sentido positivo do eixo.
+
+    pontas=1: seta simples (força); pontas=2: seta de duas pontas (vetor momento, regra
+    da mão direita). O tamanho das pontas é em pontos (independe da escala do desenho).
+    lado: lado do rótulo em relação à seta (+1 / -1).
+    """
+    x0, y0 = origem
+    if eixo == "x":
+        x1, y1, marca, u = x0 + comp, y0, ">", (1.0, 0.0)
+    else:
+        x1, y1, marca, u = x0, y0 + comp, "^", (0.0, 1.0)
+
+    passo = 0.8 * ms
+    recuo_ultima = ms / 2 + (pontas - 1) * passo
+    # haste (termina no centro da última ponta)
+    ax.annotate("", xy=(x1, y1), xytext=(x0, y0), zorder=8,
+                arrowprops=dict(arrowstyle="-", color=cor, lw=lw, shrinkA=0,
+                                shrinkB=recuo_ultima, capstyle="butt"))
+    # pontas: triângulos deslocados em pontos
+    for k in range(pontas):
+        recuo = ms / 2 + k * passo
+        tr = offset_copy(ax.transData, fig=fig, x=-u[0] * recuo, y=-u[1] * recuo, units="points")
+        ax.plot([x1], [y1], ls="none", marker=marca, ms=ms, color=cor, mec=cor,
+                transform=tr, zorder=9, clip_on=False)
+
+    if rotulo:
+        if eixo == "x":
+            off, ha, va = (0, 7 * lado), "center", "bottom" if lado > 0 else "top"
+        else:
+            off, ha, va = (7 * lado, 0), "left" if lado > 0 else "right", "center"
+        ax.annotate(rotulo, (x1, y1), xytext=off, textcoords="offset points",
+                    ha=ha, va=va, fontsize=fs, color=cor, zorder=10)
+
+
+def desenha_eixos_e_esforcos(fig, ax, g: Geometria, d: float):
+    """Eixos x, y e sentidos positivos de Fx, Fy (setas simples) e Mx, My (setas duplas).
+
+    Convenção do backend: x, y no plano da base, z para cima; momentos pela regra da mão
+    direita (o vetor Mx aponta para +x e o vetor My para +y).
+    """
+    off = 0.13 * min(g.a, g.b)  # afastamento dos vetores de momento em relação aos eixos
+    # comprimentos esquemáticos, proporcionais à dimensão da sapata em cada eixo
+    fx, fy = 0.38 * g.a, 0.38 * g.b      # forças
+    mx, my = 0.25 * g.a, 0.25 * g.b      # momentos
+
+    # --- eixos: metade negativa tracejada, metade positiva com seta e rótulo
+    xe, ye = g.a / 2 + 0.5 * d, g.b / 2 + 0.5 * d
+    ax.plot([-g.a / 2 - 0.15 * d, 0], [0, 0], ls="-.", lw=.6, color=COR_EIXO, zorder=1)
+    ax.plot([0, 0], [-g.b / 2 - 0.15 * d, 0], ls="-.", lw=.6, color=COR_EIXO, zorder=1)
+    _seta(fig, ax, (0, 0), "x", xe, COR_EIXO, ms=5.5, lw=.9, rotulo="x", lado=-1, fs=10)
+    _seta(fig, ax, (0, 0), "y", ye, COR_EIXO, ms=5.5, lw=.9, rotulo="y", lado=1, fs=10)
+
+    # --- forças: ao longo dos eixos
+    _seta(fig, ax, (0, 0), "x", fx, COR_FORCA, rotulo="$F_x$", lado=1)
+    _seta(fig, ax, (0, 0), "y", fy, COR_FORCA, rotulo="$F_y$", lado=1)
+    # --- momentos: setas de duas pontas, afastadas dos eixos (quadrantes livres)
+    _seta(fig, ax, (0, 0), "x", mx, COR_MOMENTO, pontas=2, rotulo="$M_x$", lado=-1)
+    _seta(fig, ax, (0, 0), "y", my, COR_MOMENTO, pontas=2, rotulo="$M_y$", lado=-1)
+
+
 def desenho_geometria(g: Geometria):
     """Planta e corte lado a lado, com cotas, pedestal e solo sobre a sapata."""
     fig, (ax1, ax2) = plt.subplots(
@@ -264,8 +332,7 @@ def desenho_geometria(g: Geometria):
     # pedestal
     ax1.add_patch(Rectangle((-g.a_ped/2, -g.b_ped/2), g.a_ped, g.b_ped,
                             fc=COR_CONCRETO, ec=COR_LINHA, lw=1.2, zorder=4))
-    ax1.axhline(0, ls="-.", lw=.5, color="#999", zorder=1)
-    ax1.axvline(0, ls="-.", lw=.5, color="#999", zorder=1)
+    desenha_eixos_e_esforcos(fig, ax1, g, d)
 
     # cotas da planta
     _cota_h(ax1, -g.a/2, g.a/2, g.b/2 + d, f"a = {g.a:.2f}", ref=g.b/2, ext=e)
@@ -468,6 +535,8 @@ with col_croqui:
         fig = desenho_geometria(g)
         st.pyplot(fig, use_container_width=True)
         plt.close(fig)
+        st.caption("Sentidos positivos dos esforços informados: setas simples = Fx e Fy; "
+                   "setas de duas pontas = Mx e My (regra da mão direita); z para cima.")
 
 # ============================================================
 # LINHA 2 — CARREGAMENTOS
@@ -663,7 +732,15 @@ with r3:
             resultado_bruto = dados_tensao.get("resultado_bruto")
 
             if resultado_bruto is not None:
-                fig_tensao = plot_result(resultado_bruto)
+                # resultantes das demais combinações (a crítica fica em vermelho)
+                outras = []
+                for r in resultado["resultados_por_combinacao"]:
+                    bruto = r["tensao"].get("resultado_bruto")
+                    if r is ten or bruto is None:
+                        continue
+                    outras.append((r["combinacao"], bruto.ex, bruto.ey))
+
+                fig_tensao = plot_result(resultado_bruto, outras=outras, rotulo=ten["combinacao"])
 
                 st.pyplot(
                     fig_tensao,
@@ -692,15 +769,15 @@ with r3:
             else:
                 st.caption("Sem distribuição de tensões para esta combinação.")
 
-            # Tensões nos vértices (tabela compacta)
-            vertices = dados_tensao.get("vertices")
-            if isinstance(vertices, np.ndarray):
-                vertices = vertices.tolist()
-            if isinstance(vertices, dict):
-                vertices = {
-                    str(k): (v.item() if isinstance(v, np.generic) else v.tolist() if isinstance(v, np.ndarray) else v)
-                    for k, v in vertices.items()
-                }
+        #     # Tensões nos vértices (tabela compacta)
+        #     vertices = dados_tensao.get("vertices")
+        #     if isinstance(vertices, np.ndarray):
+        #         vertices = vertices.tolist()
+        #     if isinstance(vertices, dict):
+        #         vertices = {
+        #             str(k): (v.item() if isinstance(v, np.generic) else v.tolist() if isinstance(v, np.ndarray) else v)
+        #             for k, v in vertices.items()
+        #         }
         #     if vertices is not None:
         #         with st.expander("Tensões nos vértices"):
         #             if isinstance(vertices, dict):

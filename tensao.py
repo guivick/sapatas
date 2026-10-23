@@ -585,7 +585,51 @@ def _draw_pressure_gradient(fig, ax, result: FootingResult) -> None:
     cb.set_label("Tensão no solo (kPa)")
 
 
-def _draw_contact_on_same_plan(fig, ax, result: FootingResult) -> None:
+COR_CRITICA = "#d7191c"
+COR_OUTRAS = "#37474f"
+
+
+def _draw_resultante_critica(ax, result: FootingResult, zona, rotulo=None) -> None:
+    """Resultante da combinação dimensionante, em vermelho."""
+    ax.scatter(result.ex, result.ey, color=COR_CRITICA, edgecolor="white", linewidth=0.7,
+               s=75, zorder=11, label="Resultante — combinação crítica")
+    prefixo = f"Comb. {rotulo}: " if rotulo is not None else ""
+    nome_zona = ZONAS[zona].split(" — ")[0] if zona else "Fora da base"
+
+    # O rótulo vai para fora, na direção oposta ao centro, para não cobrir as demais
+    # resultantes (que costumam ficar agrupadas perto do centro da base).
+    dx, dy = result.ex / result.B, result.ey / result.L
+    n = math.hypot(dx, dy)
+    ux, uy = (dx / n, dy / n) if n > 1e-9 else (0.7071, 0.7071)
+    ax.annotate(
+        f"{prefixo}R ({result.ex:.3f}, {result.ey:.3f})\n{nome_zona}",
+        (result.ex, result.ey), xytext=(34 * ux, 34 * uy), textcoords="offset points",
+        ha="left" if ux >= 0 else "right", va="bottom" if uy >= 0 else "top", fontsize=8,
+        bbox=dict(facecolor="white", edgecolor=COR_CRITICA, alpha=0.95, boxstyle="round,pad=0.2"),
+        arrowprops=dict(arrowstyle="-", color=COR_CRITICA, lw=0.8, shrinkA=0, shrinkB=3),
+        zorder=12,
+    )
+
+
+def _draw_outras_resultantes(ax, outras) -> None:
+    """Resultantes das demais combinações, em outra cor.
+
+    `outras`: iterável de (rotulo, ex, ey).
+    """
+    outras = list(outras or [])
+    if not outras:
+        return
+    xs = [o[1] for o in outras]
+    ys = [o[2] for o in outras]
+    ax.scatter(xs, ys, marker="D", color=COR_OUTRAS, edgecolor="white", linewidth=0.6,
+               s=38, zorder=10, label="Resultantes — demais combinações")
+    for rot, x, y in outras:
+        ax.annotate(str(rot), (x, y), xytext=(5, -9), textcoords="offset points",
+                    fontsize=7.5, color=COR_OUTRAS, zorder=10,
+                    bbox=dict(facecolor="white", edgecolor="none", alpha=0.7, pad=0.6))
+
+
+def _draw_contact_on_same_plan(fig, ax, result: FootingResult, rotulo=None) -> None:
     """Sobrepõe tensões, linha neutra, resultante e pressões nos cantos."""
     B, L = result.B, result.L
     vertices = footing_rectangle(B, L)
@@ -624,17 +668,9 @@ def _draw_contact_on_same_plan(fig, ax, result: FootingResult) -> None:
             ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color="#c62828", ls="-.",
                     lw=1.7, label="Linha neutra de contato", zorder=7)
 
-    # Resultante
+    # Resultante da combinação crítica (vermelha)
     zona = result.zone if result.zone is not None else classificar_zona(result.ex, result.ey, B, L)
-    ax.scatter(result.ex, result.ey, color="#d7191c", edgecolor="white", linewidth=0.7,
-               s=65, zorder=9, label="Resultante")
-    ax.annotate(
-        f"R ({result.ex:.3f}, {result.ey:.3f})\n"
-        f"{ZONAS[zona].split(' — ')[0] if zona else 'Fora da base'}",
-        (result.ex, result.ey), xytext=(7, 7), textcoords="offset points", fontsize=8,
-        bbox=dict(facecolor="white", edgecolor="#d7191c", alpha=0.9, boxstyle="round,pad=0.2"),
-        zorder=10,
-    )
+    _draw_resultante_critica(ax, result, zona, rotulo)
 
     # Pressões nos vértices
     corner_locations = {
@@ -658,35 +694,41 @@ def _draw_contact_on_same_plan(fig, ax, result: FootingResult) -> None:
         )
 
 
-def plot_result(result: FootingResult):
-    """Plota zonas (linhas), tensões em degradê, linha neutra e resultante."""
+def plot_result(result: FootingResult, outras=None, rotulo=None):
+    """Plota zonas (linhas), tensões em degradê, linha neutra e resultantes.
+
+    result : combinação crítica (resultante em vermelho, com tensões).
+    outras : (rotulo, ex, ey) das demais combinações (resultantes em outra cor).
+    rotulo : identificação da combinação crítica.
+    """
     fig, ax = plt.subplots(figsize=(9, 7.5))
     B, L = result.B, result.L
+    outras = list(outras or [])
 
     _draw_zone_curves_on_footing(ax, result)
 
     if result.contact_type not in (ContactType.NO_SOLUTION, ContactType.ZONE_4):
-        _draw_contact_on_same_plan(fig, ax, result)
+        _draw_contact_on_same_plan(fig, ax, result, rotulo)
     else:
         v = footing_rectangle(B, L)
         r = np.asarray(v + [v[0]])
         ax.plot(r[:, 0], r[:, 1], color="#26384b", linewidth=2, label="Contorno da sapata", zorder=6)
-        ax.scatter(result.ex, result.ey, color="#d7191c", edgecolor="white", linewidth=0.7,
-                   s=65, zorder=9, label="Resultante")
+        zona = 4 if result.contact_type == ContactType.ZONE_4 else None
+        _draw_resultante_critica(ax, result, zona, rotulo)
         if result.contact_type == ContactType.ZONE_4:
             msg = "Resultante na zona 4 (menos de 50 % da base comprimida):\nnão atende — tensões não calculadas"
-            ax.annotate(f"R ({result.ex:.3f}, {result.ey:.3f})\nZona 4", (result.ex, result.ey),
-                        xytext=(7, 7), textcoords="offset points", fontsize=8,
-                        bbox=dict(facecolor="white", edgecolor="#d7191c", alpha=0.9,
-                                  boxstyle="round,pad=0.2"), zorder=10)
         else:
             msg = "Resultante fora da base: sem equilíbrio com compressão exclusiva"
         ax.text(0.5, 0.97, msg, ha="center", va="top", transform=ax.transAxes,
                 color="#b71c1c", fontsize=9,
                 bbox=dict(facecolor="white", edgecolor="#b71c1c", alpha=0.9))
 
-    lim_x = max(B / 2 * 1.2, abs(result.ex) * 1.1)
-    lim_y = max(L / 2 * 1.2, abs(result.ey) * 1.1)
+    _draw_outras_resultantes(ax, outras)
+
+    max_ex = max([abs(result.ex)] + [abs(o[1]) for o in outras])
+    max_ey = max([abs(result.ey)] + [abs(o[2]) for o in outras])
+    lim_x = max(B / 2 * 1.2, max_ex * 1.1)
+    lim_y = max(L / 2 * 1.2, max_ey * 1.1)
     ax.set_xlim(-lim_x, lim_x)
     ax.set_ylim(-lim_y, lim_y)
     ax.set_aspect("equal", adjustable="box")  # mesma escala em x e y

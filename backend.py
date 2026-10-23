@@ -544,6 +544,9 @@ def calcular_verificacoes(
             else indice + 1
         )
 
+        if isinstance(identificador, (float, np.floating)) and float(identificador).is_integer():
+            identificador = int(identificador)
+
         descricao = (
             str(linha[col_desc])
             if col_desc is not None
